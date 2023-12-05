@@ -1,26 +1,112 @@
-import FungibleToken from 0xf233dcee88fe0abe
-import Toucans from 0x577a3c409c5dcb5e
-import ToucansTokens from 0x577a3c409c5dcb5e
+import FLOAT from 0x2d4c3caffbeab845
+import FLOATVerifiers from 0x2d4c3caffbeab845
+import NonFungibleToken from 0x1d7e57aa55817448
+import MetadataViews from 0x1d7e57aa55817448
+import FlowToken from 0x1654653399040a61
 
-transaction(tokenSymbol: String, projectId: String, amount: UFix64) {
+transaction(
+  name: String, 
+  description: String, 
+  url: String, 
+  logo: String,
+  backImage: String,
+  certificateImage: String,
+  transferrable: Bool,
+  claimable: Bool, 
+  eventType: String,
+  certificateType: String,
+  timelockToggle: Bool, 
+  dateStart: UFix64, 
+  timePeriod: UFix64, 
+  secretToggle: Bool, 
+  secretPK: String, 
+  limitedToggle: Bool, 
+  capacity: UInt64, 
+  flowTokenPurchaseToggle: Bool, 
+  flowTokenCost: UFix64,
+  minimumBalanceToggle: Bool,
+  minimumBalance: UFix64,
+  requireEmail: Bool,
+  emailVerifierPublicKey: String,
+  visibilityMode: String, // "certificate" or "picture"
+  allowMultipleClaim: Bool
+) {
 
-  let Project: &Toucans.Project
+  let FLOATEvents: &FLOAT.FLOATEvents
 
-  prepare(owner: AuthAccount) {
-    let projectCollection = owner.borrow<&Toucans.Collection>(from: Toucans.CollectionStoragePath)
-                  ?? panic("This is an incorrect address for project owner.")
-    self.Project = projectCollection.borrowProject(projectId: projectId)
-                  ?? panic("Project does not exist, at least in this collection.")
+  prepare(acct: AuthAccount) {
+    // SETUP COLLECTION
+    if acct.borrow<&FLOAT.Collection>(from: FLOAT.FLOATCollectionStoragePath) == nil {
+        acct.unlink(FLOAT.FLOATCollectionPublicPath)
+        acct.save(<- FLOAT.createEmptyCollection(), to: FLOAT.FLOATCollectionStoragePath)
+        acct.link<&FLOAT.Collection{NonFungibleToken.Receiver, NonFungibleToken.CollectionPublic, MetadataViews.ResolverCollection, FLOAT.CollectionPublic}>
+                (FLOAT.FLOATCollectionPublicPath, target: FLOAT.FLOATCollectionStoragePath)
+    }
+
+    // SETUP FLOATEVENTS
+    if acct.borrow<&FLOAT.FLOATEvents>(from: FLOAT.FLOATEventsStoragePath) == nil {
+      acct.unlink(FLOAT.FLOATEventsPublicPath)
+      acct.save(<- FLOAT.createEmptyFLOATEventCollection(), to: FLOAT.FLOATEventsStoragePath)
+      acct.link<&FLOAT.FLOATEvents{FLOAT.FLOATEventsPublic, MetadataViews.ResolverCollection}>
+                (FLOAT.FLOATEventsPublicPath, target: FLOAT.FLOATEventsStoragePath)
+    }
+
+    self.FLOATEvents = acct.borrow<&FLOAT.FLOATEvents>(from: FLOAT.FLOATEventsStoragePath)
+                      ?? panic("Could not borrow the FLOATEvents from the signer.")
   }
 
   execute {
-    if let tokenInfo = ToucansTokens.getTokenInfoFromSymbol(symbol: tokenSymbol) {
-      self.Project.proposeBurn(tokenType: tokenInfo.tokenType, amount: amount)
-    } else if tokenSymbol == self.Project.projectTokenInfo.symbol {
-      self.Project.proposeBurn(tokenType: self.Project.projectTokenInfo.tokenType, amount: amount)
-    } else {
-      panic("Not a correct token type for burning.")
+    var Timelock: FLOATVerifiers.Timelock? = nil
+    var SecretV2: FLOATVerifiers.SecretV2? = nil
+    var Limited: FLOATVerifiers.Limited? = nil
+    var MinimumBalance: FLOATVerifiers.MinimumBalance? = nil
+    var Email: FLOATVerifiers.Email? = nil
+
+    var verifiers: [{FLOAT.IVerifier}] = []
+    if timelockToggle {
+      Timelock = FLOATVerifiers.Timelock(_dateStart: dateStart, _timePeriod: timePeriod)
+      verifiers.append(Timelock!)
     }
+    if secretToggle {
+      SecretV2 = FLOATVerifiers.SecretV2(_publicKey: secretPK)
+      verifiers.append(SecretV2!)
+    }
+    if limitedToggle {
+      Limited = FLOATVerifiers.Limited(_capacity: capacity)
+      verifiers.append(Limited!)
+    }
+    if minimumBalanceToggle {
+      MinimumBalance = FLOATVerifiers.MinimumBalance(_amount: minimumBalance)
+      verifiers.append(MinimumBalance!)
+    }
+    if requireEmail {
+      Email = FLOATVerifiers.Email(_publicKey: emailVerifierPublicKey)
+      verifiers.append(Email!)
+    }
+
+    let extraMetadata: {String: AnyStruct} = {}
+    if flowTokenPurchaseToggle {
+      let tokenInfo: FLOAT.TokenInfo = FLOAT.TokenInfo(_path: /public/flowTokenReceiver, _price: flowTokenCost)
+      let flowTokenVaultIdentifier: String = Type<@FlowToken.Vault>().identifier
+      extraMetadata["prices"] = {flowTokenVaultIdentifier: tokenInfo}
+    }
+    extraMetadata["backImage"] = backImage
+    extraMetadata["eventType"] = eventType
+    extraMetadata["certificateImage"] = certificateImage
+
+    self.FLOATEvents.createEvent(
+      claimable: claimable, 
+      description: description, 
+      image: logo, 
+      name: name, 
+      transferrable: transferrable, 
+      url: url, 
+      verifiers: verifiers, 
+      allowMultipleClaim: allowMultipleClaim,
+      certificateType: certificateType,
+      visibilityMode: visibilityMode,
+      extraMetadata: extraMetadata
+    )
+    log("Started a new event for host.")
   }
 }
- 
